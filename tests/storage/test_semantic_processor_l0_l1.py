@@ -6,10 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from openviking.core.context import ContextLevel
+from openviking.server.identity import RequestContext, Role
 from openviking.storage.abstract_overview import render_abstract_overview
 from openviking.storage.errors import LockAcquisitionError
+from openviking.storage.queuefs import semantic_dag as semantic_dag_module
 from openviking.storage.queuefs import semantic_processor as semantic_processor_module
 from openviking.storage.queuefs.semantic_processor import SemanticProcessor
+from openviking_cli.session.user_id import UserIdentifier
 
 
 def _patch_semantic_limits(monkeypatch, *, abstract_max_chars=256, overview_max_chars=4000):
@@ -86,6 +89,49 @@ async def test_memory_directory_write_error_contract(monkeypatch, error, expecte
         await processor._process_memory_directory(msg)
     if expected_type is RuntimeError:
         assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_dag_directory_write_lock_error_propagates(monkeypatch):
+    # The DAG path shares the requeue contract of _process_memory_directory: a lock
+    # conflict must reach _handle_message as LockAcquisitionError, otherwise the
+    # semantic message is acked and the directory keeps its placeholder abstract.
+    ctx = RequestContext(user=UserIdentifier("acc", "user"), role=Role.USER)
+    _patch_semantic_limits(monkeypatch)
+    monkeypatch.setattr(semantic_dag_module, "get_viking_fs", lambda: SimpleNamespace())
+    processor = SemanticProcessor()
+    monkeypatch.setattr(
+        processor,
+        "_generate_overview",
+        lambda *args, **kwargs: _completed("# demo\n\nSummary."),
+    )
+    executor = semantic_dag_module.SemanticDagExecutor(
+        processor=processor,
+        context_type="resource",
+        max_concurrent_llm=1,
+        ctx=ctx,
+        skip_vectorization=True,
+    )
+    dir_uri = "viking://resources/demo"
+    executor._root_uri = dir_uri
+    executor._nodes[dir_uri] = semantic_dag_module.DirNode(
+        uri=dir_uri,
+        children_dirs=[],
+        file_paths=[f"{dir_uri}/entry.md"],
+        file_index={f"{dir_uri}/entry.md": 0},
+        child_index={},
+        file_summaries=[{"name": "entry.md", "summary": "summary"}],
+        children_abstracts=[],
+        pending=0,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_write_directory_semantics",
+        lambda *args, **kwargs: _raise(LockAcquisitionError("sidecars busy")),
+    )
+
+    with pytest.raises(LockAcquisitionError):
+        await executor._overview_task(dir_uri)
 
 
 def test_markdown_overview_uses_brief_description_as_abstract(monkeypatch):

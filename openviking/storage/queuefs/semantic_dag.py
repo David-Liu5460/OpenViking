@@ -23,6 +23,7 @@ from openviking.storage.abstract_overview import (
     write_abstract_overview,
 )
 from openviking.storage.acl import CreatorAclGrant
+from openviking.storage.errors import LockAcquisitionError
 from openviking.storage.viking_fs import LS_ALL_NODES, get_viking_fs
 from openviking.telemetry import bind_telemetry, get_current_telemetry
 from openviking.utils.ingest_options import IngestOptions
@@ -1080,12 +1081,12 @@ class SemanticDagExecutor:
                         self._root_write_result = wrote
                     if not wrote.wrote:
                         need_vectorize = False
-                except AbstractOverviewFormatError:
+                except (AbstractOverviewFormatError, LockAcquisitionError):
                     raise
                 except Exception:
                     logger.info(f"[SemanticDag] {dir_uri} write failed, skipping")
 
-        except AbstractOverviewFormatError:
+        except (AbstractOverviewFormatError, LockAcquisitionError):
             raise
         except Exception as e:
             logger.error(f"Failed to generate overview for {dir_uri}: {e}", exc_info=True)
