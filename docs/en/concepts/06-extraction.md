@@ -43,14 +43,29 @@ parse_result.temp_dir_path  # viking://temp/abc123
 
 ### Smart Splitting
 
+A document is kept in one file until it exceeds the token limit **or** the character
+limit, so a mid-sized document stays single-file by design. A 4 KB Markdown file with
+five `##` sections is only ~1000 estimated tokens, so it is *not* split.
+
 ```
-If document_tokens <= 1024:
+If document_tokens <= max_section_size and document_chars <= max_section_chars:
     → Save as single file
+Else if the document has no headers:
+    → Split by paragraphs
 Else:
     → Split by headers
-    → Section < 512 tokens → Merge
-    → Section > 1024 tokens → Create subdirectory
+    → Section < 512 tokens → Merge with an adjacent section
+    → Section over either limit → Create subdirectory (or split by paragraphs)
 ```
+
+| Limit | Config key | Default |
+|-------|------------|---------|
+| Tokens per section | `parsers.<format>.max_section_size` | 2048 |
+| Characters per section | `parsers.<format>.max_section_chars` | 6000 |
+
+Tokens are estimated, not tokenized: ~0.7 token per CJK character and ~0.3 token per
+other non-whitespace character. Passing `parse_mode="no_split"` skips splitting entirely
+and always writes one file.
 
 ### Return Result
 

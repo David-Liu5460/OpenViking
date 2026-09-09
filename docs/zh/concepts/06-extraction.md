@@ -42,14 +42,27 @@ parse_result.temp_dir_path  # viking://temp/abc123
 
 ### 智能分割
 
+只有在 token 数**或**字符数超限时才会分割文档，因此中等体量的文档保持单文件是预期行为。
+例如一个包含 5 个 `##` 小节、约 4 KB 的 Markdown 文件预估仅约 1000 tokens，不会被分割。
+
 ```
-如果 document_tokens <= 1024:
+如果 document_tokens <= max_section_size 且 document_chars <= max_section_chars:
     → 保存为单文件
+否则，如果文档没有标题:
+    → 按段落分割
 否则:
     → 按标题分割
-    → 小节 < 512 tokens → 合并
-    → 大节 > 1024 tokens → 创建子目录
+    → 小节 < 512 tokens → 与相邻小节合并
+    → 小节超过任一上限 → 创建子目录（或按段落分割）
 ```
+
+| 上限 | 配置项 | 默认值 |
+|------|--------|--------|
+| 每节 token 数 | `parsers.<format>.max_section_size` | 2048 |
+| 每节字符数 | `parsers.<format>.max_section_chars` | 6000 |
+
+token 数是估算值而非真实分词结果：CJK 字符约 0.7 token/字符，其他非空白字符约 0.3 token/字符。
+传入 `parse_mode="no_split"` 会完全跳过分割，始终写入单文件。
 
 ### 返回结果
 
