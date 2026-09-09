@@ -117,10 +117,7 @@ class SessionSkillContextProvider(SessionExtractContextProvider):
                 for entry in entries:
                     if not entry.get("isDir", False):
                         continue
-                    skill_root = (
-                        entry.get("uri")
-                        or f"{skill_root_uri.rstrip('/')}/{entry.get('name', '')}"
-                    )
+                    skill_root = entry.get("uri") or f"{skill_root_uri.rstrip('/')}/{entry.get('name', '')}"
                     skill_name = entry.get("name") or skill_root.rstrip("/").split("/")[-1]
                     if skill_name in seen_names:
                         continue
