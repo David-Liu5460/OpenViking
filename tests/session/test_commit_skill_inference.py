@@ -19,7 +19,15 @@ from openviking.session.skill.session_skill_context_provider import (
 )
 from openviking.session.skill.skill_operation_updater import SkillOperationUpdater
 from openviking.utils.skill_processor import SkillProcessor
+from openviking_cli.exceptions import InvalidArgumentError
 from openviking_cli.session.user_id import UserIdentifier
+
+
+def _raise_directory_read_error(uri: str) -> None:
+    raise InvalidArgumentError(
+        f"Directory URI is not readable as a file: {uri}. List it first, then read a file URI.",
+        details={"resource": uri, "expected": "file", "actual": "directory"},
+    )
 
 
 def _build_skill_registry() -> MemoryTypeRegistry:
@@ -149,7 +157,8 @@ async def test_agent_trajectory_context_provider_delegates_skill_prefetch_and_re
         ]
     )
     viking_fs.read_file = AsyncMock(
-        return_value="""---
+        side_effect=lambda uri, **kwargs: (
+            """---
 name: code-review
 description: Review code carefully
 allowed-tools:
@@ -161,6 +170,9 @@ tags:
 ## 核心规范
 - 先读文件
 """
+            if uri.endswith("/SKILL.md")
+            else _raise_directory_read_error(uri)
+        )
     )
     provider = AgentTrajectoryContextProvider(
         messages=[
@@ -180,12 +192,20 @@ tags:
             arguments={"uri": "viking://user/default/skills/code-review/SKILL.md"},
         )
     )
+    directory_read_result = await provider.execute_tool(
+        SimpleNamespace(name="read", arguments={"uri": "viking://user/default/skills"})
+    )
 
     assert len(prefetched) == 2
     assert "code-review" in prefetched[1]["content"]
     assert provider.get_tools() == ["read"]
     assert read_result["name"] == "code-review"
     assert "先读文件" in read_result["content"]
+    # This agent exposes read only, so a directory read must not return the generic
+    # filesystem "List it first" remediation it has no tool to follow.
+    assert "List it first" not in directory_read_result["error"]
+    assert "no list tool" in directory_read_result["error"]
+    assert "SKILL.md" in directory_read_result["error"]
     assert "viking://user/default/skills/code-review/SKILL.md" in provider.read_file_contents
     assert provider._skill_provider.read_file_contents is provider.read_file_contents
     assert provider._skill_provider._ctx is ctx

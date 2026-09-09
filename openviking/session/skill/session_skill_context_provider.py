@@ -23,6 +23,10 @@ logger = get_logger(__name__)
 
 SESSION_SKILL_MEMORY_TYPE = "session_skills"
 
+# VikingFS asks the caller to list a directory before reading it, but this provider
+# only exposes read, so that hint has to be replaced with a followable one.
+_FS_LIST_FIRST_HINT = "List it first, then read a file URI."
+
 
 def resolve_skill_extract_templates_dir() -> Path:
     """Resolve the session skill schema directory."""
@@ -89,7 +93,8 @@ class SessionSkillContextProvider(SessionExtractContextProvider):
     def instruction(self) -> str:
         return (
             "You are an extraction agent. Analyze the archived conversation, use read when "
-            "needed, and output only JSON that matches the schema descriptions."
+            "needed, and output only JSON that matches the schema descriptions. Only call read "
+            "on an exact .../SKILL.md uri from the skill listing above, never on a directory."
         )
 
     async def prefetch(self) -> List[Dict[str, Any]]:
@@ -163,7 +168,8 @@ class SessionSkillContextProvider(SessionExtractContextProvider):
         limit = arguments.get("limit", -1)
 
         if not uri.endswith("/SKILL.md"):
-            return await super().execute_tool(tool_call)
+            result = await super().execute_tool(tool_call)
+            return self._replace_unfollowable_list_hint(result, uri)
 
         try:
             raw_content = await self._viking_fs.read_file(uri, ctx=self._ctx)
@@ -185,6 +191,22 @@ class SessionSkillContextProvider(SessionExtractContextProvider):
 
     def get_tools(self) -> List[str]:
         return ["read"]
+
+    @staticmethod
+    def _replace_unfollowable_list_hint(result: Any, uri: str) -> Any:
+        if not isinstance(result, dict):
+            return result
+        error = result.get("error")
+        if not isinstance(error, str) or _FS_LIST_FIRST_HINT not in error:
+            return result
+        return {
+            **result,
+            "error": (
+                f"Directory URI is not readable as a file: {uri}. This agent has no list "
+                "tool: read an exact .../SKILL.md uri from the skill listing provided at "
+                "the start of this conversation instead."
+            ),
+        }
 
     def _get_registry(self) -> MemoryTypeRegistry:
         if self._registry is None:
